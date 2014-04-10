@@ -15,10 +15,11 @@ casscade_path = './cascade.xml'
 
 # ファイルから読み込んだアノテーション管理
 class AnnotationManager
-  attr_accessor :annotations
+  attr_accessor :annotations, :count
 
   def initialize(save_file_path)
     @annotations = {}
+    @count = 0
 
     # 保存する予定のannotations.txt
     @file_path = save_file_path
@@ -80,6 +81,15 @@ class AnnotationManager
       end
     end
   end
+
+  # 画像の管理番号降るようにした
+  def next
+    @count += 1
+  end
+
+  def previous
+    @count -= 1
+  end
 end
 
 annotation_mngr = AnnotationManager.new 'annotation.txt'
@@ -105,31 +115,40 @@ def start_annotate(window, canvas, file_path, annotations, annotation_mngr)
     thickness: 1
   }
 
-  point = nil
   start_point = nil
   stop_point = nil
+  backup_canvas = nil
 
   window.on_mouse do | m |
     case m.event
     when :left_button_down
-      canvas.line!(m, m, opt)
-      point = m
       start_point = m
+      # 描画用にcanvasをバックアップ
+      backup_canvas = canvas
 
     when :move
+      # 画面内をドラッグしていたか判定
+      next if start_point.nil?
+
       if m.left_button?
-        canvas.line!(point, m, opt) if point
-        point = m
+        canvas = backup_canvas.clone
+        canvas.rectangle!(
+          start_point,
+          m,
+          color: CvColor::Red
+        )
       end
 
     when :left_button_up
       stop_point = m
-      point = nil
 
       if (start_point.x - stop_point.x).abs > 10 && (start_point.x - stop_point.x).abs > 10
         annotations.push(start: [start_point.x, start_point.y], stop: [stop_point.x, stop_point.y])
+        canvas = draw_canvas(backup_canvas, annotations)
       end
-      canvas = draw_canvas(canvas, annotations)
+
+      backup_canvas = nil
+      start_point = nil
 
     when :right_button_down # マウスの右ボタンで塗りつぶし
       canvas.flood_fill!(m, opt[:color])
@@ -143,17 +162,21 @@ def start_annotate(window, canvas, file_path, annotations, annotation_mngr)
     next if key < 0 || key > 255
 
     case key.chr
-    when "\e" # ESCキーで終了
+    when "\e"       # ESCキーで終了
       exit
-    when "\r", "\n"
+    when "\r", "\n" # 次へ
+      annotation_mngr.next
       return annotations
-    when '1'..'9'
+    when 'b'        # 戻る
+      annotation_mngr.previous
+      return annotations
+    when '1'..'9'   # 線の太さ変更
       opt[:thickness] = key.chr.to_i
-    when 'd'
+    when 'd'        # 直近のアノテーション削除
       annotations.pop
       canvas = draw_canvas(IplImage.load(file_path), annotations)
       window.show canvas
-    when 'x'
+    when 'x'        # NGリストへ追加
       # 重複チェックなし
       File.open('ng_list.txt', 'a')  { |file| file.puts file_path }
     when 's'
@@ -167,8 +190,20 @@ end
 
 window = GUI::Window.new('detect face')
 
+file_list = []
 Dir.entries(img_path).each do | f |
   next unless f =~ /jpg|png|jpeg|txt|damaged/
+  file_list.push f
+end
+
+loop do
+  p 'count:' + annotation_mngr.count.to_s
+  if file_list[annotation_mngr.count].nil?
+    break
+  else
+    f = file_list[annotation_mngr.count]
+  end
+
   file_path = img_path + f
   canvas = IplImage.load(file_path)
 
